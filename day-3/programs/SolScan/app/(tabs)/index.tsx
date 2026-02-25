@@ -10,21 +10,17 @@ import {
         StyleSheet, // 💡 Web: CSS file → RN: StyleSheet.create()
         Alert,
         Linking,
+        KeyboardAvoidingView,
+        Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useWalletStore } from "../../src/stores/wallet-store";
+import { Ionicons } from "@expo/vector-icons";
+import { FavoriteButton } from "../../src/components/FavoriteButton";
+// const RPC = "https://api.mainnet-beta.solana.com";
 
-// ============================================
-// Solana RPC — just fetch()! Same as MERN.
-// No SDK needed for read-only.
-// ============================================
-
-// remote preceduer call
-// only one endpoint
-// pass methodName + arguments
-const RPC = "https://api.mainnet-beta.solana.com";
-
-const rpc = async (method: string, params: any[]) => {
+const rpc = async (method: string, params: any[],RPC:string) => {
         const res = await fetch(RPC, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -36,17 +32,17 @@ const rpc = async (method: string, params: any[]) => {
         return json.result;
 }
 
-const getBalance = async (addr: string) => {
-        const result = await rpc("getBalance", [addr]);
+const getBalance = async (addr: string,RPC:string) => {
+        const result = await rpc("getBalance", [addr],RPC);
         return result.value / 1_000_000_000; // 1SOL = 10^9 lamports
 }
 
-const getTokens = async (addr: string) => {
+const getTokens = async (addr: string,RPC:string) => {
         const result = await rpc("getTokenAccountsByOwner", [
                 addr,
                 { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
                 { encoding: "jsonParsed" },
-        ])
+        ],RPC);
 
         return (result.value || [])
                 .map((a: any) => ({
@@ -56,8 +52,8 @@ const getTokens = async (addr: string) => {
                 .filter((t: any) => t.amount > 0).slice(0, 10);
 }
 
-const getTxns = async (addr: string) => {
-        const sigs = await rpc("getSignaturesForAddress", [addr, { limit: 10 }])
+const getTxns = async (addr: string,RPC:string) => {
+        const sigs = await rpc("getSignaturesForAddress", [addr, { limit: 10 }],RPC);
         return sigs.map((s: any) => ({
                 sig: s.signature,
                 time: s.blockTime,
@@ -82,6 +78,7 @@ const timeAgo = (ts: number) => {
 
 export default function WalletScreen() {
 
+        const {addToHistory,searchHistory,isDevnet,toggleNetwork} = useWalletStore()
 
         const router = useRouter();
 
@@ -91,6 +88,13 @@ export default function WalletScreen() {
         const [tokens, setTokens] = useState<any[]>([])
         const [txns, setTxns] = useState<any[]>([])
 
+        const RPC = isDevnet? "https://api.devnet.solana.com": "https://api.mainnet-beta.solana.com";
+
+        const handleSearch = async (address: string) => {
+                addToHistory(address)
+                search()
+        };
+
 
         const search = async () => {
                 const addr = address.trim()
@@ -99,9 +103,9 @@ export default function WalletScreen() {
                 setLoading(true);
                 try {
                         const [bal, tok, tx] = await Promise.all([
-                                getBalance(addr),
-                                getTokens(addr),
-                                getTxns(addr),
+                                getBalance(addr ,RPC),
+                                getTokens(addr,RPC),
+                                getTxns(addr,RPC),
                         ]);
                         setBalance(bal)
                         setTokens(tok)
@@ -116,14 +120,51 @@ export default function WalletScreen() {
                 const example = "86xCnPeV69n6t3DnyGvkKobf9FdN2H9oiVDdaMpo2MMY";
                 setAddress(example)
         };
+
+        const searchFromHistory = (addr: string) => {
+                setAddress(addr);
+                addToHistory(addr);
+                setLoading(true);
+                Promise.all([getBalance(addr,RPC), getTokens(addr,RPC), getTxns(addr,RPC)])
+                        .then(([bal, tok, tx]) => {
+                                setBalance(bal);
+                                setTokens(tok);
+                                setTxns(tx);
+                        })
+                        .catch((e: unknown) => {
+                                const message = e instanceof Error ? e.message : "Unknown error";
+                                Alert.alert("Error", message);
+                        })
+                        .finally(() => setLoading(false));
+         }
+
+         const clearResults = () => {
+                setAddress("")
+                setBalance(null)
+                setTokens([])
+                setTxns([])
+        }
         return (
 
                 <SafeAreaView style={s.safe} edges={["top"]}>
 
-                        <ScrollView style={s.scroll} >
+                     <KeyboardAvoidingView
+                                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                                style={{ flex: 1 }}
+                        >  
+                        <ScrollView style={s.scroll} > 
                                 {/* Header */}
-                                <Text style={s.title}>SolScan</Text>
-                                <Text style={s.subtitle}>Explore any Solana wallet</Text>
+                               <View style={s.header}>
+                                        <View>
+                                                <Text style={s.title}>SolScan</Text>
+                                                <Text style={s.subtitle}>Explore any Solana wallet</Text>
+                                        </View>
+                                        <TouchableOpacity style={s.networkToggle} onPress={toggleNetwork}>
+                                        <View style={[s.networkDot, isDevnet && s.networkDotDevnet]} />
+                                        <Text style={s.networkText}>{isDevnet ? "Devnet" : "Mainnet"}</Text>
+                                        </TouchableOpacity>
+                                </View>
+                                
 
                                 {/* Search */}
                                 <View style={s.inputContainer}>
@@ -145,7 +186,7 @@ export default function WalletScreen() {
                                         ALL text must be inside <Text>! */}
                                         <TouchableOpacity
                                                 style={[s.btn, loading && s.btnDisabled]}
-                                                onPress={search}
+                                                onPress={()=>handleSearch(address)}
                                                 disabled={loading}
                                                 activeOpacity={0.8}
                                         >
@@ -165,11 +206,37 @@ export default function WalletScreen() {
                                         >
                                                 <Text style={s.btnGhostText}>Demo</Text>
                                         </TouchableOpacity>
+
+                                          <TouchableOpacity style={s.btnGhost} onPress={clearResults}>
+                                        <Text style={s.btnGhostText}>Clear</Text>
+                                        </TouchableOpacity>
                                 </View>
+
+                                {searchHistory.length > 0 && balance === null && (
+                                <View style={s.historySection}>
+                                        <Text style={s.historyTitle}>Recent Searches</Text>
+                                        {searchHistory.slice(0, 5).map((addr) => (
+                                                <TouchableOpacity
+                                                        key={addr}
+                                                        style={s.historyItem}
+                                                        onPress={() => searchFromHistory(addr)}
+                                                >
+                                                        <Ionicons name="time-outline" size={16} color="#6B7280" />
+                                                        <Text style={s.historyAddress} numberOfLines={1}>
+                                                        {short(addr, 8)}
+                                                        </Text>
+                                                        <Ionicons name="chevron-forward" size={16} color="#6B7280" />
+                                                </TouchableOpacity>
+                                        ))}
+                                </View>
+                                )}
 
                                 {/* Balance Card */}
                                 {balance !== null && (
                                 <View style={s.card}>
+                                         <View style={s.favoriteWrapper}>
+                                                <FavoriteButton address={address.trim()} />
+                                        </View>
                                         <Text style={s.label}>SOL Balance</Text>
                                         <View style={s.balanceRow}>
                                         <Text style={s.balance}>{balance.toFixed(4)}</Text>
@@ -242,6 +309,8 @@ export default function WalletScreen() {
 
                         </ScrollView>
 
+                       
+                        </KeyboardAvoidingView>
                  </SafeAreaView>
         )
 }
@@ -249,170 +318,213 @@ export default function WalletScreen() {
 
 
 const s = StyleSheet.create({
-        safe: {
-                flex: 1,
-                backgroundColor: "#0D0D12",
-        },
-        scroll: {
-                flex: 1,
-                paddingHorizontal: 24,
-                paddingTop: 16,
-        },
-        title: {
-                color: "#FFFFFF",
-                fontSize: 32,
-                fontWeight: "700",
-                marginBottom: 8,
-                letterSpacing: -0.5,
-        },
-        subtitle: {
-                color: "#6B7280",
-                fontSize: 15,
-                marginBottom: 28,
-                fontWeight: "400",
-        },
-
-        inputContainer: {
-                backgroundColor: "#16161D",
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: "#2A2A35",
-                paddingHorizontal: 16,
-                paddingVertical: 4,
-        },
-        input: {
-                color: "#FFFFFF",
-                fontSize: 15,
-                paddingVertical: 14,
-                fontWeight: "400",
-        },
-
-        btnRow: {
-                flexDirection: "row",
-                gap: 12,
-                marginTop: 16,
-        },
-        btn: {
-                flex: 1,
-                backgroundColor: "#14F195",
-                paddingVertical: 16,
-                borderRadius: 14,
-                alignItems: "center",
-                justifyContent: "center",
-                shadowColor: "#14F195",
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 12,
-                elevation: 8,
-        },
-        btnDisabled: {
-                opacity: 0.6,
-        },
-        btnText: {
-                color: "#0D0D12",
-                fontWeight: "600",
-                fontSize: 16,
-                letterSpacing: 0.3,
-        },
-        btnGhost: {
-                paddingVertical: 16,
-                paddingHorizontal: 20,
-                borderRadius: 14,
-                backgroundColor: "#16161D",
-                borderWidth: 1,
-                borderColor: "#2A2A35",
-        },
-        btnGhostText: {
-                color: "#9CA3AF",
-                fontSize: 15,
-                fontWeight: "500",
-        },
-
-        card: {
-                backgroundColor: "#16161D",
-                borderRadius: 24,
-                padding: 28,
-                alignItems: "center",
-                marginTop: 28,
-                borderWidth: 1,
-                borderColor: "#2A2A35",
-        },
-        label: {
-                color: "#6B7280",
-                fontSize: 13,
-                fontWeight: "500",
-                textTransform: "uppercase",
-                letterSpacing: 1.2,
-        },
-        balanceRow: {
-                flexDirection: "row",
-                alignItems: "baseline",
-                marginTop: 8,
-        },
-        balance: {
-                color: "#FFFFFF",
-                fontSize: 48,
-                fontWeight: "700",
-                letterSpacing: -1,
-        },
-        sol: {
-                color: "#14F195",
-                fontSize: 18,
-                fontWeight: "600",
-                marginLeft: 8,
-        },
-        addr: {
-                color: "#9945FF",
-                fontSize: 13,
-                fontFamily: "monospace",
-                marginTop: 16,
-                backgroundColor: "#1E1E28",
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 8,
-                overflow: "hidden",
-        },
-
-        section: {
-                color: "#FFFFFF",
-                fontSize: 20,
-                fontWeight: "600",
-                marginTop: 32,
-                marginBottom: 16,
-                letterSpacing: -0.3,
-        },
-
-        row: {
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                backgroundColor: "#16161D",
-                paddingVertical: 16,
-                paddingHorizontal: 18,
-                borderRadius: 14,
-                marginBottom: 10,
-                borderWidth: 1,
-                borderColor: "#2A2A35",
-        },
-        mint: {
-                color: "#FFFFFF",
-                fontSize: 14,
-                fontFamily: "monospace",
-                fontWeight: "500",
-        },
-        amount: {
-                color: "#14F195",
-                fontSize: 15,
-                fontWeight: "600",
-        },
-        time: {
-                color: "#6B7280",
-                fontSize: 12,
-                marginTop: 4,
-                fontWeight: "400",
-        },
-        statusIcon: {
-                fontSize: 18,
-                fontWeight: "600",
-        },
-})
+  safe: {
+    flex: 1,
+    backgroundColor: "#0D0D12",
+  },
+  scroll: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 28,
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  subtitle: {
+    color: "#6B7280",
+    fontSize: 15,
+  },
+  networkToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#16161D",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+    gap: 6,
+  },
+  networkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#14F195",
+  },
+  networkDotDevnet: {
+    backgroundColor: "#F59E0B",
+  },
+  networkText: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  historySection: {
+    marginTop: 24,
+  },
+  historyTitle: {
+    color: "#6B7280",
+    fontSize: 13,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  historyItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#16161D",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+    gap: 12,
+  },
+  historyAddress: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontFamily: "monospace",
+  },
+  inputContainer: {
+    backgroundColor: "#16161D",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  input: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    paddingVertical: 14,
+  },
+  btnRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 16,
+  },
+  btn: {
+    flex: 1,
+    backgroundColor: "#14F195",
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: "center",
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  btnText: {
+    color: "#0D0D12",
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  btnGhost: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    backgroundColor: "#16161D",
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+  },
+  btnGhostText: {
+    color: "#9CA3AF",
+    fontSize: 15,
+  },
+  card: {
+    backgroundColor: "#16161D",
+    borderRadius: 24,
+    padding: 28,
+    alignItems: "center",
+    marginTop: 28,
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+    position: "relative",
+  },
+  favoriteWrapper: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+  },
+  label: {
+    color: "#6B7280",
+    fontSize: 13,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  balanceRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginTop: 8,
+  },
+  balance: {
+    color: "#FFFFFF",
+    fontSize: 48,
+    fontWeight: "700",
+  },
+  sol: {
+    color: "#14F195",
+    fontSize: 18,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  addr: {
+    color: "#9945FF",
+    fontSize: 13,
+    fontFamily: "monospace",
+    marginTop: 16,
+    backgroundColor: "#1E1E28",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  section: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "600",
+    marginTop: 32,
+    marginBottom: 16,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#16161D",
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#2A2A35",
+  },
+  mint: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontFamily: "monospace",
+  },
+  amount: {
+    color: "#14F195",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  tokenRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  time: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginTop: 4,
+  },
+});
