@@ -60,7 +60,7 @@ export default function settings() {
                                                 <View style={s.iconBox}>
                                                         <Ionicons name="heart" size={20} color="#14F195" />
                                                 </View>
-                                                <Text style={s.label}>Saved Wallets</Text>
+                                                <Text style={s.label}>Saved Favorites Wallets</Text>
                                                 </View>
                                                 <View style={s.rowRight}>
                                                 <View style={s.badge}>
